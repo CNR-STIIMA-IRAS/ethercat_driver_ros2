@@ -11,6 +11,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   rclcpp
   realtime_tools
   ethercat_msgs
+  std_srvs
 )
 
 # find dependencies
