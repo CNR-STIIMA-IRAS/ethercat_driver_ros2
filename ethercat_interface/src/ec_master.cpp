@@ -40,7 +40,7 @@ EcMaster::DomainInfo::DomainInfo(ec_master_t * master)
     return;
   }
 
-  const ec_pdo_entry_reg_t empty = {0};
+  const ec_pdo_entry_reg_t empty = {0, 0, 0, 0, 0, 0, nullptr, nullptr};
   domain_regs.push_back(empty);
 }
 
@@ -53,26 +53,45 @@ EcMaster::DomainInfo::~DomainInfo()
   }
 }
 
-
-EcMaster::EcMaster(const int master)
+bool EcMaster::setMaster(const int master_id)
 {
-  master_ = ecrt_request_master(master);
+  if (NULL != master_) {
+    ecrt_release_master(master_);
+    master_ = NULL;
+  }
+  master_ = ecrt_request_master(master_id);
   if (master_ == NULL) {
     printWarning("Failed to obtain master.");
-    return;
+    return false;
+  }
+  return true;
+}
+
+EcMaster::EcMaster(const int master, bool skip_master_init)
+{
+  if (!skip_master_init) {
+    bool ok = setMaster(master);
+    if (!ok) {
+      return;
+    }
   }
   interval_ = 0;
 }
 
 EcMaster::~EcMaster()
 {
+  /*
   for (SlaveInfo & slave : slave_info_) {
-    //
+    //TODO verify what this piece of code was here for
   }
+  */
   for (auto & domain : domain_info_) {
     if (domain.second != NULL) {
       delete domain.second;
     }
+  }
+  if (master_ != NULL) {
+    ecrt_release_master(master_);
   }
 }
 
@@ -211,7 +230,7 @@ void EcMaster::registerPDOInDomain(
   }
 
   // set the last element to null
-  ec_pdo_entry_reg_t empty = {0};
+  ec_pdo_entry_reg_t empty = {0, 0, 0, 0, 0, 0, nullptr, nullptr};
   domain_info->domain_regs.back() = empty;
 }
 
@@ -441,7 +460,7 @@ void EcMaster::setThreadRealTime()
   /* Pre-fault our stack
       8*1024 is the maximum stack size
       which is guaranteed safe to access without faulting */
-  int MAX_SAFE_STACK = 8 * 1024;
+  constexpr unsigned int MAX_SAFE_STACK = 8 * 1024;
   unsigned char dummy[MAX_SAFE_STACK];
   memset(dummy, 0, MAX_SAFE_STACK);
 }

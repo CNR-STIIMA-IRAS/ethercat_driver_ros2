@@ -23,10 +23,33 @@
 
 namespace ethercat_driver
 {
+
+EthercatDriver::EthercatDriver()
+: control_frequency_(-1)
+  , master_id_(-1)
+  , master_(-1, true)
+  , activated_(false)
+{}
+
+
 CallbackReturn EthercatDriver::on_init(
   const hardware_interface::HardwareInfo & info)
 {
   if (hardware_interface::SystemInterface::on_init(info) != CallbackReturn::SUCCESS) {
+    return CallbackReturn::ERROR;
+  }
+
+  // Get master id
+  if (info_.hardware_parameters.find("master_id") == info_.hardware_parameters.end()) {
+    master_id_ = 0;
+  } else {
+    master_id_ = std::stod(info_.hardware_parameters["master_id"]);
+  }
+  bool ok = master_.setMaster(master_id_);
+  if (!ok) {
+    RCLCPP_FATAL(
+      rclcpp::get_logger("EthercatDriver"),
+      "Failed to connect to master %d", master_id_);
     return CallbackReturn::ERROR;
   }
 

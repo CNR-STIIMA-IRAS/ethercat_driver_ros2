@@ -31,7 +31,7 @@ namespace ethercat_interface
 class EcMaster
 {
 public:
-  explicit EcMaster(const int master = 0);
+  explicit EcMaster(const int master = 0, bool skip_master_init = false);
   virtual ~EcMaster();
 
   /** \brief add a slave device to the master
@@ -84,6 +84,8 @@ public:
   {
     interval_ = 1000000000.0 / frequency;
   }
+
+  bool setMaster(const int master_id);
 
   uint32_t getInterval() {return interval_;}
 
@@ -157,7 +159,7 @@ private:
   {
     EcSlave * slave = NULL;
     ec_slave_config_t * config = NULL;
-    ec_slave_config_state_t config_state = {0};
+    ec_slave_config_state_t config_state = {0, 0, 0};
   };
 
   std::vector<SlaveInfo> slave_info_;
@@ -170,6 +172,8 @@ private:
   uint32_t check_state_frequency_ = 10;
 
   uint32_t interval_;
+
+  uint32_t master_id_ = 0;
 };
 
 }  // namespace ethercat_interface

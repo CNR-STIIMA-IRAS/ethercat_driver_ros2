@@ -39,6 +39,9 @@ namespace ethercat_driver
 class EthercatDriver : public hardware_interface::SystemInterface
 {
 public:
+  ETHERCAT_DRIVER_PUBLIC EthercatDriver();
+
+public:
   RCLCPP_SHARED_PTR_DEFINITIONS(EthercatDriver)
 
   ETHERCAT_DRIVER_PUBLIC
@@ -59,6 +62,7 @@ public:
   ETHERCAT_DRIVER_PUBLIC
   CallbackReturn on_deactivate(const rclcpp_lifecycle::State & previous_state) override;
 
+public:
   ETHERCAT_DRIVER_PUBLIC
   hardware_interface::return_type read(const rclcpp::Time &, const rclcpp::Duration &) override;
 
@@ -83,6 +87,8 @@ private:
     "ethercat_interface", "ethercat_interface::EcSlave"};
 
   int control_frequency_;
+
+  int master_id_;
   ethercat_interface::EcMaster master_;
   std::mutex ec_mutex_;
   bool activated_;

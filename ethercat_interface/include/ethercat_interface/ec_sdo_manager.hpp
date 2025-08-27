@@ -98,7 +98,7 @@ public:
   std::string data_type;
   int data;
 
-protected:
+private:
   size_t type2bytes(std::string type)
   {
     if (type == "int8" || type == "uint8") {
@@ -110,6 +110,7 @@ protected:
     } else if (type == "int64" || type == "uint64") {
       return 8;
     }
+    return 0;
   }
 };
 
