@@ -14,6 +14,7 @@
 //
 // Author: Maciej Bednarczyk (macbednarczyk@gmail.com)
 
+#include <bitset>
 #include <numeric>
 
 #include "ethercat_generic_plugins/generic_ec_cia402_drive.hpp"
@@ -94,7 +95,7 @@ void EcCiA402Drive::processData(size_t index, uint8_t * domain_address)
       state_ = deviceState(status_word_);
       if (state_ != last_state_) {
         std::cout << "STATE: " << DEVICE_STATE_STR.at(state_)
-                  << " with status word :" << status_word_ << std::endl;
+                  << " with status word :" << std::hex << "0x" << status_word_ << "(" << "0b" << std::bitset<16>(status_word_) <<  ")" << std::endl;
       }
     }
     initialized_ = ((state_ == STATE_OPERATION_ENABLED) &&
