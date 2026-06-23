@@ -207,7 +207,7 @@ CallbackReturn EthercatDriver::on_configure(
 {
   using namespace std::placeholders;
   get_slave_states_srv_ = get_node()->create_service<ethercat_msgs::srv::GetSlaveStates>(
-    "~/get_slave_states",
+    "~/get_slave_states_master" + std::to_string(master_id_),
     std::bind(&EthercatDriver::get_slave_states_callback, this, _1, _2));
   return CallbackReturn::SUCCESS;
 }
