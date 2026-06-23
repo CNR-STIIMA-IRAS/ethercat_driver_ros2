@@ -15,6 +15,7 @@
 #include "ethercat_driver/ethercat_driver.hpp"
 
 #include <tinyxml2.h>
+#include <functional>
 #include <string>
 #include <regex>
 
@@ -204,7 +205,40 @@ CallbackReturn EthercatDriver::on_init(
 CallbackReturn EthercatDriver::on_configure(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
+  using namespace std::placeholders;
+  get_slave_states_srv_ = get_node()->create_service<ethercat_msgs::srv::GetSlaveStates>(
+    "~/get_slave_states",
+    std::bind(&EthercatDriver::get_slave_states_callback, this, _1, _2));
   return CallbackReturn::SUCCESS;
+}
+
+void EthercatDriver::get_slave_states_callback(
+  const std::shared_ptr<ethercat_msgs::srv::GetSlaveStates::Request> /*request*/,
+  std::shared_ptr<ethercat_msgs::srv::GetSlaveStates::Response> response)
+{
+  response->slave_names.clear();
+  response->slave_states.clear();
+  response->slave_names.reserve(ec_modules_.size());
+  response->slave_states.reserve(ec_modules_.size());
+
+  for (auto i = 0ul; i < ec_modules_.size(); ++i) {
+    const auto state = ec_modules_[i]->get_slave_state();
+    std::string slave_name = state.name;
+    if (slave_name.empty() && i < ec_module_parameters_.size()) {
+      const auto name_it = ec_module_parameters_[i].find("name");
+      if (name_it != ec_module_parameters_[i].end()) {
+        slave_name = name_it->second;
+      }
+    }
+    if (slave_name.empty()) {
+      slave_name = "slave";
+    }
+
+    response->slave_names.push_back(
+      slave_name + "-" + std::to_string(state.alias) + ":" + std::to_string(state.position));
+    response->slave_states.push_back(
+      state.online ? ethercat_interface::EcSlave::al_state_to_string(state.al_state) : "OFFLINE");
+  }
 }
 
 std::vector<hardware_interface::StateInterface>

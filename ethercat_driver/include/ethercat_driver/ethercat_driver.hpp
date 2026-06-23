@@ -17,6 +17,7 @@
 
 #include <unordered_map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <pluginlib/class_loader.hpp>
@@ -25,11 +26,13 @@
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_return_values.hpp"
 #include "rclcpp/macros.hpp"
+#include "rclcpp/service.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "ethercat_driver/visibility_control.h"
 #include "ethercat_interface/ec_slave.hpp"
 #include "ethercat_interface/ec_master.hpp"
+#include "ethercat_msgs/srv/get_slave_states.hpp"
 
 using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
@@ -73,6 +76,10 @@ private:
   std::vector<std::unordered_map<std::string, std::string>> getEcModuleParam(
     std::string & urdf, std::string component_name, std::string component_type);
 
+  void get_slave_states_callback(
+    const std::shared_ptr<ethercat_msgs::srv::GetSlaveStates::Request> request,
+    std::shared_ptr<ethercat_msgs::srv::GetSlaveStates::Response> response);
+
   std::vector<std::shared_ptr<ethercat_interface::EcSlave>> ec_modules_;
   std::vector<std::unordered_map<std::string, std::string>> ec_module_parameters_;
 
@@ -90,6 +97,7 @@ private:
 
   int master_id_;
   ethercat_interface::EcMaster master_;
+  rclcpp::Service<ethercat_msgs::srv::GetSlaveStates>::SharedPtr get_slave_states_srv_;
   std::mutex ec_mutex_;
   bool activated_;
 };
