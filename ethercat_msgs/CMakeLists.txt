@@ -17,6 +17,7 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetSdo.srv"
   "srv/GetSdo.srv"
+  "srv/GetSlaveStates.srv"
   DEPENDENCIES
 )
 
