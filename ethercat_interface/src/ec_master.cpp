@@ -64,6 +64,7 @@ bool EcMaster::setMaster(const int master_id)
     printWarning("Failed to obtain master.");
     return false;
   }
+  master_id_ = master_id;
   return true;
 }
 
@@ -109,6 +110,7 @@ void EcMaster::addSlave(uint16_t alias, uint16_t position, EcSlave * slave)
     printWarning("Add slave. Failed to get slave configuration.");
     return;
   }
+  slave->set_slave_identity(alias, position);
 
   // check and setup dc
 
@@ -508,6 +510,7 @@ void EcMaster::checkSlaveStates()
   for (SlaveInfo & slave : slave_info_) {
     ec_slave_config_state_t s;
     ecrt_slave_config_state(slave.config, &s);
+    slave.slave->set_slave_config_state(s);
 
     if (s.al_state != slave.config_state.al_state) {
       // this spams the terminal at initialization.

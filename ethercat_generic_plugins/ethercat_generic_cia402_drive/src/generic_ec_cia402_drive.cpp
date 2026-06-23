@@ -115,6 +115,7 @@ bool EcCiA402Drive::setupSlave(
   state_interface_ptr_ = state_interface;
   command_interface_ptr_ = command_interface;
   paramters_ = slave_paramters;
+  set_slave_metadata(paramters_);
 
   if (paramters_.find("slave_config") != paramters_.end()) {
     if (!setup_from_config_file(paramters_["slave_config"])) {
