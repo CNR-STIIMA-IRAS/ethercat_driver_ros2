@@ -12,6 +12,7 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(ethercat_interface REQUIRED)
+find_package(ethercat_msgs REQUIRED)
 
 add_library(
   ${PROJECT_NAME}
@@ -31,6 +32,7 @@ ament_target_dependencies(
   rclcpp
   rclcpp_lifecycle
   ethercat_interface
+  ethercat_msgs
 )
 
 # Causes the visibility macros to use dllexport rather than dllimport,
@@ -67,5 +69,6 @@ ament_export_dependencies(
   rclcpp
   rclcpp_lifecycle
   ethercat_interface
+  ethercat_msgs
 )
 ament_package()
