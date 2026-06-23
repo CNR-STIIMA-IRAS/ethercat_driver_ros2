@@ -19,13 +19,28 @@ find_package(rclcpp REQUIRED)
 
 # EtherLab
 set(ETHERLAB_DIR /usr/local/etherlab)
+file(GLOB ETHERCAT_DKMS_INCLUDE_DIRS "/usr/src/ethercat-dkms-*/include")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 find_library(ETHERCAT_LIB ethercat HINTS ${ETHERLAB_DIR}/lib)
+find_path(
+  ETHERCAT_INCLUDE_DIR
+  NAMES ecrt.h
+  HINTS
+    ${ETHERLAB_DIR}/include
+    /usr/local/include
+    /usr/include
+  PATHS
+    ${ETHERCAT_DKMS_INCLUDE_DIRS}
+)
+
+if(NOT ETHERCAT_INCLUDE_DIR)
+  message(FATAL_ERROR "Could not find EtherLab ecrt.h")
+endif()
 
 ament_export_include_directories(
   include
-  ${ETHERLAB_DIR}/include
+  ${ETHERCAT_INCLUDE_DIR}
 )
 
 add_library(
@@ -37,7 +52,7 @@ target_include_directories(
   ${PROJECT_NAME}
   PRIVATE
   include
-  ${ETHERLAB_DIR}/include
+  ${ETHERCAT_INCLUDE_DIR}
 )
 
 target_link_libraries(${PROJECT_NAME} ${ETHERCAT_LIB})
@@ -71,7 +86,7 @@ if(BUILD_TESTING)
     test_ec_pdo_channel_manager
     test/test_ec_pdo_channel_manager.cpp
   )
-  target_include_directories(test_ec_pdo_channel_manager PRIVATE include ${ETHERLAB_DIR}/include)
+  target_include_directories(test_ec_pdo_channel_manager PRIVATE include ${ETHERCAT_INCLUDE_DIR})
 
   target_link_libraries(test_ec_pdo_channel_manager
     ${PROJECT_NAME}
