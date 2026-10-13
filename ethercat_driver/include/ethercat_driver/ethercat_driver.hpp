@@ -15,6 +15,7 @@
 #ifndef ETHERCAT_DRIVER__ETHERCAT_DRIVER_HPP_
 #define ETHERCAT_DRIVER__ETHERCAT_DRIVER_HPP_
 
+#include <chrono>
 #include <unordered_map>
 #include <memory>
 #include <mutex>
@@ -80,6 +81,22 @@ private:
     const std::shared_ptr<ethercat_msgs::srv::GetSlaveStates::Request> request,
     std::shared_ptr<ethercat_msgs::srv::GetSlaveStates::Response> response);
 
+  /** Bus supervision, called from read() after the process data has been received.
+   *  While a bus fault is active, every exported "status_word" state interface reports
+   *  kBusFaultStatusWord, which CiA402 decoders see as FAULT. */
+  void superviseBus();
+  void loadBusSupervisionParameters();
+  void resetBusSupervision();
+
+  struct CounterWatchdog
+  {
+    std::string name;
+    const double * value = nullptr;
+    double last_value = 0.0;
+    bool initialized = false;
+    std::chrono::steady_clock::time_point last_change;
+  };
+
   std::vector<std::shared_ptr<ethercat_interface::EcSlave>> ec_modules_;
   std::vector<std::unordered_map<std::string, std::string>> ec_module_parameters_;
 
@@ -100,6 +117,29 @@ private:
   rclcpp::Service<ethercat_msgs::srv::GetSlaveStates>::SharedPtr get_slave_states_srv_;
   std::mutex ec_mutex_;
   bool activated_;
+
+  // Bus supervision parameters (hardware <param>, see loadBusSupervisionParameters()).
+  int bus_fault_wc_cycles_ = 3;
+  double bus_fault_hold_time_ = 1.0;
+  double cycle_slow_factor_ = 3.0;
+  double cycle_fault_max_gap_ = 0.05;
+  double cycle_fault_ratio_ = 0.2;
+  double cycle_fault_window_ = 1.0;
+  double counter_watchdog_timeout_ = 0.05;
+
+  // Bus supervision state, touched only by the control loop thread.
+  std::vector<double *> status_word_states_;
+  std::vector<CounterWatchdog> counter_watchdogs_;
+  std::vector<bool> slave_seen_operational_;
+  bool bus_armed_ = false;
+  int wc_incomplete_cycles_ = 0;
+  bool bus_fault_active_ = false;
+  std::chrono::steady_clock::time_point bus_fault_last_seen_;
+  bool have_last_read_ = false;
+  std::chrono::steady_clock::time_point last_read_;
+  std::chrono::steady_clock::time_point cycle_window_start_;
+  uint32_t cycle_window_count_ = 0;
+  uint32_t cycle_window_slow_ = 0;
 };
 }  // namespace ethercat_driver
 

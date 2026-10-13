@@ -118,6 +118,12 @@ public:
       operational_.load()};
   }
 
+  /** lock-free, allocation-free view of the last checked slave state */
+  bool slave_online_and_operational() const
+  {
+    return online_.load() && operational_.load();
+  }
+
   static std::string al_state_to_string(uint8_t al_state)
   {
     switch (al_state & 0x0F) {

@@ -15,7 +15,9 @@
 #include "ethercat_driver/ethercat_driver.hpp"
 
 #include <tinyxml2.h>
+#include <cmath>
 #include <functional>
+#include <limits>
 #include <string>
 #include <regex>
 
@@ -24,6 +26,23 @@
 
 namespace ethercat_driver
 {
+
+namespace
+{
+// Reported on every "status_word" state interface while a bus fault is active.
+// Decoded as FAULT by CiA402 consumers but never produced by a communicating drive (bit 9,
+// "remote", is set whenever a drive reports a state), so supervisors can tell a bus fault
+// from a drive fault.
+constexpr double kBusFaultStatusWord = 0x0008;
+
+double param_or(
+  const std::unordered_map<std::string, std::string> & params,
+  const std::string & name, double default_value)
+{
+  const auto it = params.find(name);
+  return it == params.end() ? default_value : std::stod(it->second);
+}
+}  // namespace
 
 EthercatDriver::EthercatDriver()
 : control_frequency_(-1)
@@ -199,7 +218,219 @@ CallbackReturn EthercatDriver::on_init(
 
   RCLCPP_INFO(rclcpp::get_logger("EthercatDriver"), "Got %li modules", ec_modules_.size());
 
+  try {
+    loadBusSupervisionParameters();
+  } catch (const std::exception & e) {
+    RCLCPP_FATAL(
+      rclcpp::get_logger("EthercatDriver"),
+      "Invalid bus supervision configuration: %s", e.what());
+    return CallbackReturn::ERROR;
+  }
+
   return CallbackReturn::SUCCESS;
+}
+
+void EthercatDriver::loadBusSupervisionParameters()
+{
+  const auto & hw = info_.hardware_parameters;
+  bus_fault_wc_cycles_ = static_cast<int>(param_or(hw, "bus_fault_wc_cycles", 3));
+  bus_fault_hold_time_ = param_or(hw, "bus_fault_hold_time", 1.0);
+  cycle_slow_factor_ = param_or(hw, "cycle_slow_factor", 3.0);
+  cycle_fault_max_gap_ = param_or(hw, "cycle_fault_max_gap", 0.05);
+  cycle_fault_ratio_ = param_or(hw, "cycle_fault_ratio", 0.2);
+  cycle_fault_window_ = param_or(hw, "cycle_fault_window", 1.0);
+  counter_watchdog_timeout_ = param_or(hw, "counter_watchdog_timeout", 0.05);
+
+  // State vectors are never resized after on_init(), so the pointers stay valid.
+  status_word_states_.clear();
+  counter_watchdogs_.clear();
+  auto collect = [this](
+    const std::vector<hardware_interface::ComponentInfo> & components,
+    std::vector<std::vector<double>> & states)
+    {
+      for (auto c = 0ul; c < components.size(); c++) {
+        const auto & component = components[c];
+        const auto wd_it = component.parameters.find("counter_watchdog");
+        bool wd_found = wd_it == component.parameters.end();
+        for (auto k = 0ul; k < component.state_interfaces.size(); k++) {
+          const auto & name = component.state_interfaces[k].name;
+          if (name == "status_word") {
+            status_word_states_.push_back(&states[c][k]);
+          }
+          if (!wd_found && name == wd_it->second) {
+            CounterWatchdog wd;
+            wd.name = component.name + "/" + name;
+            wd.value = &states[c][k];
+            counter_watchdogs_.push_back(wd);
+            wd_found = true;
+          }
+        }
+        if (!wd_found) {
+          throw std::runtime_error(
+                  "counter_watchdog '" + wd_it->second + "' is not a state interface of " +
+                  component.name);
+        }
+      }
+    };
+  collect(info_.joints, hw_joint_states_);
+  collect(info_.sensors, hw_sensor_states_);
+  collect(info_.gpios, hw_gpio_states_);
+
+  RCLCPP_INFO(
+    rclcpp::get_logger("EthercatDriver"),
+    "Bus supervision: wc_cycles=%d hold=%.3fs slow_factor=%.1f max_gap=%.3fs "
+    "slow_ratio=%.2f/%.1fs counter_timeout=%.3fs, %zu status words, %zu counter watchdogs",
+    bus_fault_wc_cycles_, bus_fault_hold_time_, cycle_slow_factor_, cycle_fault_max_gap_,
+    cycle_fault_ratio_, cycle_fault_window_, counter_watchdog_timeout_,
+    status_word_states_.size(), counter_watchdogs_.size());
+}
+
+void EthercatDriver::resetBusSupervision()
+{
+  slave_seen_operational_.assign(ec_modules_.size(), false);
+  for (auto & wd : counter_watchdogs_) {
+    wd.initialized = false;
+  }
+  bus_armed_ = false;
+  wc_incomplete_cycles_ = 0;
+  bus_fault_active_ = false;
+  have_last_read_ = false;
+  cycle_window_count_ = 0;
+  cycle_window_slow_ = 0;
+}
+
+void EthercatDriver::superviseBus()
+{
+  using std::chrono::duration;
+  const auto logger = rclcpp::get_logger("EthercatDriver");
+  const auto now = std::chrono::steady_clock::now();
+
+  // The reason string is built only when a fault starts, to keep the loop allocation-free.
+  enum class Cause { NONE, CYCLE_GAP, SLOW_CYCLES, WORKING_COUNTER, SLAVE, COUNTER };
+  Cause cause = Cause::NONE;
+  double cause_value = 0.0;
+  std::size_t cause_index = 0;
+
+  // Working counter: per-cycle, domain-wide. Every check is armed once the bus was complete,
+  // so the slaves' gradual transition to OP at startup is not reported as a fault.
+  const ec_wc_state_t wc = master_.getDomainWcState();
+  if (wc == EC_WC_COMPLETE) {
+    wc_incomplete_cycles_ = 0;
+    bus_armed_ = true;
+  } else if (bus_armed_ && ++wc_incomplete_cycles_ >= bus_fault_wc_cycles_) {
+    cause = Cause::WORKING_COUNTER;
+    cause_value = wc;
+  }
+
+  // Control loop periodicity: everything the drives see is paced by read()/write().
+  if (have_last_read_ && bus_armed_) {
+    const double dt = duration<double>(now - last_read_).count();
+    const double period = 1.0 / control_frequency_;
+    if (cycle_fault_max_gap_ > 0.0 && dt > cycle_fault_max_gap_ && cause == Cause::NONE) {
+      cause = Cause::CYCLE_GAP;
+      cause_value = dt;
+    }
+    if (dt > cycle_slow_factor_ * period) {
+      cycle_window_slow_++;
+      RCLCPP_WARN_THROTTLE(
+        logger, *get_clock(), 1000,
+        "Slow control cycle on master %d: %.1f ms (nominal %.1f ms)",
+        master_id_, dt * 1e3, period * 1e3);
+    }
+    cycle_window_count_++;
+    if (duration<double>(now - cycle_window_start_).count() >= cycle_fault_window_) {
+      const double ratio = static_cast<double>(cycle_window_slow_) / cycle_window_count_;
+      if (cycle_fault_ratio_ > 0.0 && ratio > cycle_fault_ratio_ && cause == Cause::NONE) {
+        cause = Cause::SLOW_CYCLES;
+        cause_value = ratio;
+      }
+      cycle_window_start_ = now;
+      cycle_window_count_ = 0;
+      cycle_window_slow_ = 0;
+    }
+  } else {
+    cycle_window_start_ = now;
+  }
+  have_last_read_ = true;
+  last_read_ = now;
+
+  // Per-slave AL state, refreshed every few cycles; armed per slave once seen in OP.
+  for (auto i = 0ul; i < ec_modules_.size(); i++) {
+    if (ec_modules_[i]->slave_online_and_operational()) {
+      slave_seen_operational_[i] = true;
+    } else if (slave_seen_operational_[i] && cause == Cause::NONE) {
+      cause = Cause::SLAVE;
+      cause_index = i;
+    }
+  }
+
+  // Counters that a healthy device advances every cycle (e.g. a sensor sample counter).
+  if (bus_armed_) {
+    for (auto i = 0ul; i < counter_watchdogs_.size(); i++) {
+      auto & wd = counter_watchdogs_[i];
+      const double value = *wd.value;
+      if (!wd.initialized || value != wd.last_value) {
+        wd.initialized = true;
+        wd.last_value = value;
+        wd.last_change = now;
+      } else if (duration<double>(now - wd.last_change).count() > counter_watchdog_timeout_ &&
+        cause == Cause::NONE)
+      {
+        cause = Cause::COUNTER;
+        cause_index = i;
+      }
+    }
+  }
+
+  if (cause != Cause::NONE) {
+    if (!bus_fault_active_) {
+      std::string reason;
+      switch (cause) {
+        case Cause::CYCLE_GAP:
+          reason = "control cycle gap of " + std::to_string(cause_value * 1e3) + " ms";
+          break;
+        case Cause::SLOW_CYCLES:
+          reason = std::to_string(cause_value * 100.0) + "% slow control cycles";
+          break;
+        case Cause::WORKING_COUNTER:
+          reason = "domain working counter incomplete for " +
+            std::to_string(wc_incomplete_cycles_) + " cycles (wc_state=" +
+            std::to_string(static_cast<int>(cause_value)) + ")";
+          break;
+        case Cause::SLAVE: {
+            const auto state = ec_modules_[cause_index]->get_slave_state();
+            reason = "slave " + state.name + " at position " + std::to_string(state.position) +
+              (state.online ? " not operational (AL " +
+              ethercat_interface::EcSlave::al_state_to_string(state.al_state) + ")" :
+              " offline");
+            break;
+          }
+        case Cause::COUNTER:
+          reason = counter_watchdogs_[cause_index].name + " frozen for more than " +
+            std::to_string(counter_watchdog_timeout_ * 1e3) + " ms";
+          break;
+        case Cause::NONE:
+          break;
+      }
+      RCLCPP_ERROR(
+        logger, "Bus fault on master %d: %s. Reporting FAULT on %zu drive status words.",
+        master_id_, reason.c_str(), status_word_states_.size());
+      bus_fault_active_ = true;
+    }
+    bus_fault_last_seen_ = now;
+  } else if (bus_fault_active_ &&
+    duration<double>(now - bus_fault_last_seen_).count() > bus_fault_hold_time_)
+  {
+    RCLCPP_WARN(logger, "Bus fault on master %d cleared.", master_id_);
+    bus_fault_active_ = false;
+  }
+
+  // Held for at least bus_fault_hold_time so that sampled supervisors cannot miss it.
+  if (bus_fault_active_) {
+    for (double * status_word : status_word_states_) {
+      *status_word = kBusFaultStatusWord;
+    }
+  }
 }
 
 CallbackReturn EthercatDriver::on_configure(
@@ -407,6 +638,7 @@ CallbackReturn EthercatDriver::on_activate(
   RCLCPP_INFO(
     rclcpp::get_logger("EthercatDriver"), "System Successfully started!");
 
+  resetBusSupervision();
   activated_ = true;
 
   return CallbackReturn::SUCCESS;
@@ -437,6 +669,7 @@ hardware_interface::return_type EthercatDriver::read(
   const std::unique_lock<std::mutex> lock(ec_mutex_, std::try_to_lock);
   if (lock.owns_lock() && activated_) {
     master_.readData();
+    superviseBus();
   }
   return hardware_interface::return_type::OK;
 }

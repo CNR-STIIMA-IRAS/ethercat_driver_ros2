@@ -467,6 +467,15 @@ void EcMaster::setThreadRealTime()
   memset(dummy, 0, MAX_SAFE_STACK);
 }
 
+ec_wc_state_t EcMaster::getDomainWcState(uint32_t domain) const
+{
+  const auto it = domain_info_.find(domain);
+  if (it == domain_info_.end() || it->second == NULL) {
+    return EC_WC_ZERO;
+  }
+  return it->second->domain_state.wc_state;
+}
+
 void EcMaster::checkDomainState(uint32_t domain)
 {
   DomainInfo * domain_info = domain_info_.at(domain);

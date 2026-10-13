@@ -92,6 +92,9 @@ public:
   void readData(uint32_t domain = 0);
   void writeData(uint32_t domain = 0);
 
+  /** working counter state of the domain as of the last update()/readData() */
+  ec_wc_state_t getDomainWcState(uint32_t domain = 0) const;
+
 private:
   /** true if running */
   volatile bool running_ = false;
