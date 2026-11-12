@@ -97,7 +97,7 @@ private:
   volatile bool running_ = false;
 
   /** start and current time */
-  std::chrono::time_point<std::chrono::system_clock> start_t_, curr_t_;
+  std::chrono::time_point<std::chrono::steady_clock> start_t_, curr_t_;
 
   // EtherCAT Control
 

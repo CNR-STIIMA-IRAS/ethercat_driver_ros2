@@ -26,8 +26,10 @@
 #include <iostream>
 #include <sstream>
 
-#define EC_NEWTIMEVAL2NANO(TV) \
-  (((TV).tv_sec - 946684800ULL) * 1000000000ULL + (TV).tv_nsec)
+#define EC_MONOTONIC2NANO(TV) \
+  (static_cast<uint64_t>((TV).tv_sec) * 1000000000ULL + static_cast<uint64_t>((TV).tv_nsec))
+// #define EC_NEWTIMEVAL2NANO(TV) \
+//   (((TV).tv_sec - 946684800ULL) * 1000000000ULL + (TV).tv_nsec)
 
 namespace ethercat_interface
 {
@@ -117,7 +119,7 @@ void EcMaster::addSlave(uint16_t alias, uint16_t position, EcSlave * slave)
   if (slave->assign_activate_dc_sync()) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
-    ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+    ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
     ecrt_slave_config_dc(
       slave_info.config,
       slave->assign_activate_dc_sync(),
@@ -255,7 +257,7 @@ bool EcMaster::activate()
   // set application time
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
-  ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+  ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
 
   // activate master
   bool activate_status = ecrt_master_activate(master_);
@@ -309,8 +311,8 @@ void EcMaster::update(uint32_t domain)
 
   struct timespec t;
 
-  clock_gettime(CLOCK_REALTIME, &t);
-  ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
   ecrt_master_sync_reference_clock(master_);
   ecrt_master_sync_slave_clocks(master_);
 
@@ -368,8 +370,8 @@ void EcMaster::writeData(uint32_t domain)
 
   struct timespec t;
 
-  clock_gettime(CLOCK_REALTIME, &t);
-  ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
   ecrt_master_sync_reference_clock(master_);
   ecrt_master_sync_slave_clocks(master_);
 
@@ -396,7 +398,7 @@ void EcMaster::run(SIMPLECAT_CONTRL_CALLBACK user_callback)
   t.tv_sec++;
 
   running_ = true;
-  start_t_ = std::chrono::system_clock::now();
+  start_t_ = std::chrono::steady_clock::now();
   while (running_) {
     // wait until next shot
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
@@ -405,7 +407,7 @@ void EcMaster::run(SIMPLECAT_CONTRL_CALLBACK user_callback)
     this->update();
 
     // get actual time
-    curr_t_ = std::chrono::system_clock::now();
+    curr_t_ = std::chrono::steady_clock::now();
 
     // user callback
     user_callback();
