@@ -494,7 +494,8 @@ bool EcMaster::processDataValid(uint32_t domain)
     ++domain_info->wc_incomplete_cycles;
   }
 
-  const bool valid = domain_info->wc_incomplete_cycles < wc_incomplete_limit_;
+  const bool valid = wc_incomplete_limit_ == 0 ||
+    domain_info->wc_incomplete_cycles < wc_incomplete_limit_;
   if (valid != domain_info->process_data_valid) {
     if (valid) {
       printf("Domain: process data valid again (WC %u).\n", ds.working_counter);

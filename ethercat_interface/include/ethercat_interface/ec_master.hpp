@@ -89,6 +89,13 @@ public:
 
   uint32_t getInterval() {return interval_;}
 
+  /** consecutive cycles with an incomplete working counter after which the
+   *  process data are declared not valid (see wc_incomplete_limit_); 0
+   *  disables the check. */
+  void setWcIncompleteLimit(uint32_t cycles) {wc_incomplete_limit_ = cycles;}
+
+  uint32_t getWcIncompleteLimit() const {return wc_incomplete_limit_;}
+
   void readData(uint32_t domain = 0);
   void writeData(uint32_t domain = 0);
 
@@ -187,7 +194,9 @@ private:
   /** consecutive cycles with an incomplete working counter after which the
    *  process data are declared not valid (5 cycles = 20 ms at 250 Hz). A
    *  frame lost now and then does not count (the only transient in the logs,
-   *  run 0048, was about 2 cycles); a slave lost from the bus does. */
+   *  run 0048, was about 2 cycles); a slave lost from the bus does.
+   *  0: check disabled, the data are always considered valid. Set from the
+   *  hardware parameter max_incomplete_wc_cycles of the driver. */
   uint32_t wc_incomplete_limit_ = 5;
 
   uint32_t interval_;
