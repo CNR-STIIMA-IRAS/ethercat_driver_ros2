@@ -85,6 +85,17 @@ void EcCiA402Drive::processData(size_t index, uint8_t * domain_address)
 
   // Special case: StatusWord
   if (pdo_channels_info_[index].index == CiA402D_TPDO_STATUSWORD) {
+    if (!process_data_valid_) {
+      // The drive no longer exchanges data: the status word read is the last
+      // one received ("operation enabled") while the drive has most likely
+      // lost torque. Report a fault instead, so that the state controller
+      // publishes fault_present and the brake is closed.
+      pdo_channels_info_[index].last_value = STATUS_WORD_NO_DATA;
+      if (pdo_channels_info_[index].interface_index >= 0) {
+        state_interface_ptr_->at(pdo_channels_info_[index].interface_index) =
+          STATUS_WORD_NO_DATA;
+      }
+    }
     status_word_ = pdo_channels_info_[index].last_value;
   }
 

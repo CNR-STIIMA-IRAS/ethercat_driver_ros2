@@ -303,11 +303,7 @@ void EcMaster::update(uint32_t domain)
   }
 
   // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  processDomainData(domain, processDataValid(domain));
 
   struct timespec t;
 
@@ -345,11 +341,7 @@ void EcMaster::readData(uint32_t domain)
   }
 
   // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  processDomainData(domain, processDataValid(domain));
 
   ++update_counter_;
 }
@@ -361,12 +353,8 @@ void EcMaster::writeData(uint32_t domain)
     throw std::runtime_error("Null domain info: " + std::to_string(domain));
   }
 
-  // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  // read and write process data (same received data as readData(): same validity)
+  processDomainData(domain, domain_info->process_data_valid);
 
   struct timespec t;
 
@@ -488,6 +476,52 @@ void EcMaster::checkDomainState(uint32_t domain)
   domain_info->domain_state = ds;
 }
 
+
+bool EcMaster::processDataValid(uint32_t domain)
+{
+  DomainInfo * domain_info = domain_info_.at(domain);
+  if (domain_info == NULL) {
+    throw std::runtime_error("Null domain info: " + std::to_string(domain));
+  }
+
+  const ec_domain_state_t & ds = domain_info->domain_state;
+  if (ds.wc_state == EC_WC_COMPLETE) {
+    domain_info->wc_complete_seen = true;
+    domain_info->wc_incomplete_cycles = 0;
+  } else if (domain_info->wc_complete_seen) {
+    // Only after the bus has been complete once: during the start-up the
+    // slaves reach OP one by one and the inputs are not used yet.
+    ++domain_info->wc_incomplete_cycles;
+  }
+
+  const bool valid = domain_info->wc_incomplete_cycles < wc_incomplete_limit_;
+  if (valid != domain_info->process_data_valid) {
+    if (valid) {
+      printf("Domain: process data valid again (WC %u).\n", ds.working_counter);
+    } else {
+      // A slave no longer exchanges data (e.g. lost from the bus): its inputs
+      // keep the last values received (a drive would still look enabled).
+      printf(
+        "Domain: process data NOT valid, WC %u incomplete for %u cycles: "
+        "slave inputs not trusted (drives reported in FAULT).\n",
+        ds.working_counter, domain_info->wc_incomplete_cycles);
+    }
+    fflush(stdout);
+    domain_info->process_data_valid = valid;
+  }
+  return valid;
+}
+
+void EcMaster::processDomainData(uint32_t domain, bool valid)
+{
+  DomainInfo * domain_info = domain_info_.at(domain);
+  for (DomainInfo::Entry & entry : domain_info->entries) {
+    (entry.slave)->set_process_data_valid(valid);
+    for (int i = 0; i < entry.num_pdos; ++i) {
+      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
+    }
+  }
+}
 
 void EcMaster::checkMasterState()
 {

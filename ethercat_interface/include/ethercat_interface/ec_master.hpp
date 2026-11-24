@@ -112,6 +112,12 @@ private:
   /** check for change in the domain state */
   void checkDomainState(uint32_t domain);
 
+  /** process data validity from the working counter, see wc_incomplete_limit_ */
+  bool processDataValid(uint32_t domain);
+
+  /** processData() of every slave of the domain, telling them if the data are valid */
+  void processDomainData(uint32_t domain, bool valid);
+
   /** check for change in the master state */
   void checkMasterState();
 
@@ -149,6 +155,13 @@ private:
     };
 
     std::vector<Entry> entries;
+
+    /** consecutive cycles with an incomplete working counter */
+    uint32_t wc_incomplete_cycles = 0;
+    /** the working counter has been complete at least once (bus in OP) */
+    bool wc_complete_seen = false;
+    /** process data valid in the last cycle */
+    bool process_data_valid = true;
   };
 
   /** map from domain index to domain info */
@@ -170,6 +183,12 @@ private:
   /** frequency to check for master or slave state change.
    *  state checked every frequency_ control loops */
   uint32_t check_state_frequency_ = 10;
+
+  /** consecutive cycles with an incomplete working counter after which the
+   *  process data are declared not valid (5 cycles = 20 ms at 250 Hz). A
+   *  frame lost now and then does not count (the only transient in the logs,
+   *  run 0048, was about 2 cycles); a slave lost from the bus does. */
+  uint32_t wc_incomplete_limit_ = 5;
 
   uint32_t interval_;
 
