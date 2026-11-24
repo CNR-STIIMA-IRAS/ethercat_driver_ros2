@@ -59,6 +59,12 @@ public:
     is_operational_ = value;
     operational_.store(value);
   }
+  /** Called by the master before processData() in every cycle: false when
+   *  the process data of the domain are not valid (working counter
+   *  incomplete for several cycles, e.g. a slave lost from the bus). The
+   *  inputs then hold the last values received, not the device state: a
+   *  slave must not report them as current. */
+  virtual void set_process_data_valid(bool /*valid*/) {}
   /** Assign activate DC synchronization. return activate word*/
   virtual int assign_activate_dc_sync() {return 0x00;}
   /** number of elements in the syncs array. */

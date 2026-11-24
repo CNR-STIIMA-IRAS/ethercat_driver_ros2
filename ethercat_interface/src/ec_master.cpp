@@ -26,8 +26,10 @@
 #include <iostream>
 #include <sstream>
 
-#define EC_NEWTIMEVAL2NANO(TV) \
-  (((TV).tv_sec - 946684800ULL) * 1000000000ULL + (TV).tv_nsec)
+#define EC_MONOTONIC2NANO(TV) \
+  (static_cast<uint64_t>((TV).tv_sec) * 1000000000ULL + static_cast<uint64_t>((TV).tv_nsec))
+// #define EC_NEWTIMEVAL2NANO(TV) \
+//   (((TV).tv_sec - 946684800ULL) * 1000000000ULL + (TV).tv_nsec)
 
 namespace ethercat_interface
 {
@@ -117,7 +119,7 @@ void EcMaster::addSlave(uint16_t alias, uint16_t position, EcSlave * slave)
   if (slave->assign_activate_dc_sync()) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
-    ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+    ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
     ecrt_slave_config_dc(
       slave_info.config,
       slave->assign_activate_dc_sync(),
@@ -255,7 +257,7 @@ bool EcMaster::activate()
   // set application time
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
-  ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+  ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
 
   // activate master
   bool activate_status = ecrt_master_activate(master_);
@@ -301,16 +303,12 @@ void EcMaster::update(uint32_t domain)
   }
 
   // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  processDomainData(domain, processDataValid(domain));
 
   struct timespec t;
 
-  clock_gettime(CLOCK_REALTIME, &t);
-  ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
   ecrt_master_sync_reference_clock(master_);
   ecrt_master_sync_slave_clocks(master_);
 
@@ -343,11 +341,7 @@ void EcMaster::readData(uint32_t domain)
   }
 
   // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  processDomainData(domain, processDataValid(domain));
 
   ++update_counter_;
 }
@@ -359,17 +353,13 @@ void EcMaster::writeData(uint32_t domain)
     throw std::runtime_error("Null domain info: " + std::to_string(domain));
   }
 
-  // read and write process data
-  for (DomainInfo::Entry & entry : domain_info->entries) {
-    for (int i = 0; i < entry.num_pdos; ++i) {
-      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
-    }
-  }
+  // read and write process data (same received data as readData(): same validity)
+  processDomainData(domain, domain_info->process_data_valid);
 
   struct timespec t;
 
-  clock_gettime(CLOCK_REALTIME, &t);
-  ecrt_master_application_time(master_, EC_NEWTIMEVAL2NANO(t));
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  ecrt_master_application_time(master_, EC_MONOTONIC2NANO(t));
   ecrt_master_sync_reference_clock(master_);
   ecrt_master_sync_slave_clocks(master_);
 
@@ -396,7 +386,7 @@ void EcMaster::run(SIMPLECAT_CONTRL_CALLBACK user_callback)
   t.tv_sec++;
 
   running_ = true;
-  start_t_ = std::chrono::system_clock::now();
+  start_t_ = std::chrono::steady_clock::now();
   while (running_) {
     // wait until next shot
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
@@ -405,7 +395,7 @@ void EcMaster::run(SIMPLECAT_CONTRL_CALLBACK user_callback)
     this->update();
 
     // get actual time
-    curr_t_ = std::chrono::system_clock::now();
+    curr_t_ = std::chrono::steady_clock::now();
 
     // user callback
     user_callback();
@@ -495,6 +485,53 @@ void EcMaster::checkDomainState(uint32_t domain)
   domain_info->domain_state = ds;
 }
 
+
+bool EcMaster::processDataValid(uint32_t domain)
+{
+  DomainInfo * domain_info = domain_info_.at(domain);
+  if (domain_info == NULL) {
+    throw std::runtime_error("Null domain info: " + std::to_string(domain));
+  }
+
+  const ec_domain_state_t & ds = domain_info->domain_state;
+  if (ds.wc_state == EC_WC_COMPLETE) {
+    domain_info->wc_complete_seen = true;
+    domain_info->wc_incomplete_cycles = 0;
+  } else if (domain_info->wc_complete_seen) {
+    // Only after the bus has been complete once: during the start-up the
+    // slaves reach OP one by one and the inputs are not used yet.
+    ++domain_info->wc_incomplete_cycles;
+  }
+
+  const bool valid = wc_incomplete_limit_ == 0 ||
+    domain_info->wc_incomplete_cycles < wc_incomplete_limit_;
+  if (valid != domain_info->process_data_valid) {
+    if (valid) {
+      printf("Domain: process data valid again (WC %u).\n", ds.working_counter);
+    } else {
+      // A slave no longer exchanges data (e.g. lost from the bus): its inputs
+      // keep the last values received (a drive would still look enabled).
+      printf(
+        "Domain: process data NOT valid, WC %u incomplete for %u cycles: "
+        "slave inputs not trusted (drives reported in FAULT).\n",
+        ds.working_counter, domain_info->wc_incomplete_cycles);
+    }
+    fflush(stdout);
+    domain_info->process_data_valid = valid;
+  }
+  return valid;
+}
+
+void EcMaster::processDomainData(uint32_t domain, bool valid)
+{
+  DomainInfo * domain_info = domain_info_.at(domain);
+  for (DomainInfo::Entry & entry : domain_info->entries) {
+    (entry.slave)->set_process_data_valid(valid);
+    for (int i = 0; i < entry.num_pdos; ++i) {
+      (entry.slave)->processData(i, domain_info->domain_pd + entry.offset[i]);
+    }
+  }
+}
 
 void EcMaster::checkMasterState()
 {

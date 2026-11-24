@@ -42,6 +42,14 @@ public:
 
   virtual void processData(size_t index, uint8_t * domain_address);
 
+  /** false: the inputs are stale (see EcSlave::set_process_data_valid), the
+   *  drive is reported in FAULT (STATUS_WORD_NO_DATA) until they are valid. */
+  void set_process_data_valid(bool valid) override {process_data_valid_ = valid;}
+
+  /** status word reported while the process data are not valid: only the
+   *  fault bit, i.e. STATE_FAULT, so torque is considered lost (brake). */
+  static constexpr uint16_t STATUS_WORD_NO_DATA = 0x0008;
+
   virtual bool setupSlave(
     std::unordered_map<std::string, std::string> slave_paramters,
     std::vector<double> * state_interface,
@@ -64,6 +72,7 @@ protected:
   int fault_reset_command_interface_index_ = -1;
   bool last_fault_reset_command_ = false;
   double last_position_ = std::numeric_limits<double>::quiet_NaN();
+  bool process_data_valid_ = true;
 
   /** returns device state based upon the status_word */
   DeviceState deviceState(uint16_t status_word);

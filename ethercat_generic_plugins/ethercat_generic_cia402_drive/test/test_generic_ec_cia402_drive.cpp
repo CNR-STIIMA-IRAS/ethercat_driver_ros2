@@ -316,3 +316,41 @@ TEST_F(EcCiA402DriveTest, EcWriteDefaultTargetPosition)
   plugin_->processData(0, domain_address);
   ASSERT_EQ(EC_READ_S32(domain_address), 654321);
 }
+
+TEST_F(EcCiA402DriveTest, StaleProcessDataReportedAsFault)
+{
+  // Status word mapped to a state interface, as in the robot configuration.
+  std::string config = test_drive_config;
+  const std::string unmapped = "state_interface: ~}  # Status word";
+  config.replace(config.find(unmapped), unmapped.size(), "state_interface: status_word}");
+  std::unordered_map<std::string, std::string> slave_paramters;
+  std::vector<double> state_interface = {0};
+  plugin_->state_interface_ptr_ = &state_interface;
+  slave_paramters["state_interface/status_word"] = "0";
+  plugin_->paramters_ = slave_paramters;
+  plugin_->setup_from_config(YAML::Load(config));
+  plugin_->setup_interface_mapping();
+  ASSERT_EQ(plugin_->pdo_channels_info_[9].index, 0x6041);
+  ASSERT_EQ(plugin_->pdo_channels_info_[9].interface_index, 0);
+
+  // The domain keeps the last status word received: operation enabled.
+  uint8_t domain_address[2];
+  EC_WRITE_U16(domain_address, 0x0237);
+  plugin_->processData(9, domain_address);
+  ASSERT_EQ(state_interface[0], 0x0237);
+  ASSERT_EQ(plugin_->deviceState(plugin_->status_word_), STATE_OPERATION_ENABLED);
+
+  // Working counter incomplete: the same stale bytes are reported as a fault.
+  plugin_->set_process_data_valid(false);
+  plugin_->processData(9, domain_address);
+  ASSERT_EQ(state_interface[0], FriendEcCiA402Drive::STATUS_WORD_NO_DATA);
+  ASSERT_EQ(plugin_->deviceState(plugin_->status_word_), STATE_FAULT);
+  // and stay so in every cycle while the data are not valid
+  plugin_->processData(9, domain_address);
+  ASSERT_EQ(state_interface[0], FriendEcCiA402Drive::STATUS_WORD_NO_DATA);
+
+  // Data valid again: the status word read from the drive.
+  plugin_->set_process_data_valid(true);
+  plugin_->processData(9, domain_address);
+  ASSERT_EQ(state_interface[0], 0x0237);
+}

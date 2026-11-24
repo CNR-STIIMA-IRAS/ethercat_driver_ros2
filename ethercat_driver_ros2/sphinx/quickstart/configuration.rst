@@ -18,6 +18,12 @@ The EtherCAT Driver is designed in such a way that each EtherCAT Master is defin
 
 .. note:: As in the current implementation of :code:`ros2_control` there is no information about the system update frequency, it needs to be passed here as parameter. This is only needed by systems that include EtherCAT modules that use the Distributed Clock.
 
+Optional parameter :code:`max_incomplete_wc_cycles` (default :code:`5`): number of consecutive cycles with an incomplete working counter after which the process data are considered stale, i.e. some slave no longer exchanges data. CiA402 drives are then reported in fault (status word :code:`0x0008`) until the working counter is complete again, instead of keeping the last status word received. :code:`0` disables the check.
+
+.. code-block:: xml
+
+  <param name="max_incomplete_wc_cycles">5</param>
+
 EtherCAT Slave modules as Plugins
 ---------------------------------
 

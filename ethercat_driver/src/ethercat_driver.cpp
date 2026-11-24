@@ -568,6 +568,41 @@ CallbackReturn EthercatDriver::on_activate(
     return CallbackReturn::ERROR;
   }
 
+  // Stale process data: after this many consecutive cycles with an
+  // incomplete working counter the drives are reported in FAULT (0 = never).
+  if (info_.hardware_parameters.find("max_incomplete_wc_cycles") !=
+    info_.hardware_parameters.end())
+  {
+    const std::string & value = info_.hardware_parameters["max_incomplete_wc_cycles"];
+    int cycles = -1;
+    try {
+      size_t used = 0;
+      cycles = std::stoi(value, &used);
+      if (used != value.size()) {
+        cycles = -1;
+      }
+    } catch (const std::exception &) {
+      cycles = -1;
+    }
+    if (cycles < 0) {
+      RCLCPP_FATAL(
+        rclcpp::get_logger("EthercatDriver"),
+        "Invalid max_incomplete_wc_cycles '%s': expected an integer >= 0.", value.c_str());
+      return CallbackReturn::ERROR;
+    }
+    master_.setWcIncompleteLimit(static_cast<uint32_t>(cycles));
+  }
+  if (master_.getWcIncompleteLimit() == 0) {
+    RCLCPP_WARN(
+      rclcpp::get_logger("EthercatDriver"),
+      "max_incomplete_wc_cycles = 0: stale process data are never reported as a fault.");
+  } else {
+    RCLCPP_INFO(
+      rclcpp::get_logger("EthercatDriver"),
+      "Process data not valid after %u consecutive cycles with an incomplete working counter.",
+      master_.getWcIncompleteLimit());
+  }
+
   // start EC and wait until state operative
 
   master_.setCtrlFrequency(control_frequency_);
